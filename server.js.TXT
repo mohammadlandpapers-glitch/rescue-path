@@ -1,0 +1,105 @@
+/**
+ * RESCUEPATH V2X EMERGENCY SYSTEM
+ * Core Backend Logic
+ */
+
+const express = require('express');
+const app = express();
+const http = require('http').createServer(app);
+const io = require('socket.io')(http);
+
+// Serve the frontend files from the 'public' folder
+app.use(express.static('public'));
+
+// 1. Global System State
+let activeAmbulance = {
+    isActive: false,
+    id: "HYD-AMB-108",
+    lat: null,
+    lng: null,
+    destination: "Care Hospital, Banjara Hills"
+};
+
+// 2. Haversine Formula (GPS Distance Calculator)
+function getDistanceInMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // Radius of the Earth in meters
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c);
+}
+
+// 3. Real-Time Communication Hub
+io.on('connection', (socket) => {
+    console.log(`New Device Connected: ${socket.id}`);
+
+    // ACTION: Ambulance Pilot hits "Start Journey"
+    socket.on('start_emergency', (data) => {
+        activeAmbulance.isActive = true;
+        activeAmbulance.lat = data.lat;
+        activeAmbulance.lng = data.lng;
+
+        // INSTANT BROADCAST: Alert every connected phone immediately
+        io.emit('emergency_start_broadcast', {
+            message: `🚨 AMBULANCE STARTING: Moving from Attapur towards ${activeAmbulance.destination}!`,
+            timestamp: new Date().toLocaleTimeString()
+        });
+        console.log("Emergency Broadcast Issued.");
+    });
+
+    // ACTION: Ambulance streams live GPS updates while driving
+    socket.on('update_ambulance_location', (coords) => {
+        activeAmbulance.lat = coords.lat;
+        activeAmbulance.lng = coords.lng;
+    });
+
+    // ACTION: Commuter phone pings for proximity alerts
+    socket.on('check_proximity', (commuterCoords) => {
+        if (!activeAmbulance.isActive || !activeAmbulance.lat) return;
+
+        const distance = getDistanceInMeters(
+            activeAmbulance.lat, activeAmbulance.lng,
+            commuterCoords.lat, commuterCoords.lng
+        );
+
+        // Targeted instructions based on your specific 7-step rules
+        let payload = { active: true, distance: distance, instruction: "", severity: "" };
+
+        if (distance <= 100) {
+            payload.instruction = "⚠️ MOVE LEFT NOW! Ambulance 100m away. Slow to 20km/h.";
+            payload.severity = "critical";
+        } else if (distance <= 250) {
+            payload.instruction = "🚗 Navigate to your left. Ambulance is 250m away.";
+            payload.severity = "high";
+        } else if (distance <= 500) {
+            payload.instruction = "🚨 Stay alert. Ambulance is 500m away on your path.";
+            payload.severity = "medium";
+        } else if (distance <= 1000) {
+            payload.instruction = "ℹ️ Ambulance approaching. Keep lane clear.";
+            payload.severity = "low";
+        } else {
+            payload.active = false; // Too far away to alert
+        }
+
+        socket.emit('proximity_alert', payload);
+    });
+
+    socket.on('disconnect', () => {
+        console.log("Device Disconnected.");
+    });
+});
+
+// Start the server
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => {
+    console.log(`
+    =========================================
+    RESCUEPATH SERVER IS LIVE
+    Port: ${PORT}
+    URL: http://localhost:${PORT}
+    =========================================
+    `);
+});
