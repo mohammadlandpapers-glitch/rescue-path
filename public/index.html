@@ -15,14 +15,17 @@
         <p id="instr">SCANNING...</p>
     </div>
 
-    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
-        const socket = io();
-        function activateAmbulance() {
-            navigator.geolocation.watchPosition(p => {
-                socket.emit('start_journey', {lat: p.coords.latitude, lng: p.coords.longitude});
-            });
-        }
+        const socket = io("https://rescue-path.onrender.com");
+       function activateAmbulance() {
+    navigator.geolocation.watchPosition(p => {
+        socket.emit('start_journey', {
+            lat: p.coords.latitude, 
+            lng: p.coords.longitude
+        });
+    }, err => alert("Please turn on GPS"), { enableHighAccuracy: true });
+}
         socket.on('proximity_update', (dist) => {
             document.getElementById('hud').style.display = 'block';
             document.getElementById('dist').innerText = dist + "m";
