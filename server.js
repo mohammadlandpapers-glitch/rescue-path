@@ -1,14 +1,15 @@
 const express = require('express');
+const path =require('path');
 const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 
 // 1. Tell the server to use your public folder files
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // 2. Tell the server to load your map (index.html) automatically
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // 3. Global System State for the Ambulance
