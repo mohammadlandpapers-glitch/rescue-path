@@ -1,13 +1,17 @@
 {
-  "name": "rescue-path",
+  "name": "rescue-path-backend",
   "version": "1.0.0",
-  "description": "V2X Emergency System",
+  "description": "Ambulance tracking backend for Luxettipet coordinates",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "socket.io": "^4.7.2"
+    "socket.io": "^4.7.5"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
