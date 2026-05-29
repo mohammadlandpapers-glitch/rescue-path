@@ -18,13 +18,19 @@
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
         const socket = io("https://rescue-path.onrender.com");
-       function activateAmbulance() {
+      function activateAmbulance() {
     navigator.geolocation.watchPosition(p => {
         socket.emit('start_journey', {
-            lat: p.coords.latitude, 
+            lat: p.coords.latitude,
             lng: p.coords.longitude
         });
-    }, err => alert("Please turn on GPS"), { enableHighAccuracy: true });
+    }, err => {
+        alert("Please turn on GPS");
+    }, { 
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 15000 
+    });
 }
         socket.on('proximity_update', (dist) => {
             document.getElementById('hud').style.display = 'block';
