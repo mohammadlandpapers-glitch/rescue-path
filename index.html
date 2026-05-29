@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { background: #000; color: #fff; text-align: center; font-family: sans-serif; }
+        #hud { border: 5px solid red; padding: 50px; margin: 20px; display: block; }
+        .blink { animation: blinker 0.6s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0; } }
+    </style>
+</head>
+<body>
+    <button onclick="activateAmbulance()">AMBULANCE MODE</button>
+    <div id="hud">
+        <h1 id="dist">--</h1>
+        <p id="instr">SCANNING...</p>
+    </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+        // 1. Initialize Connection
+        const socket = io("https://rescue-path.onrender.com");
+        const instrDisplay = document.getElementById('instr');
+        const distDisplay = document.getElementById('dist');
+        const hudElement = document.getElementById('hud');
+
+        // Connection feedback
+        socket.on("connect", () => {
+            instrDisplay.innerText = "CONNECTED TO SERVER. READY.";
+            console.log("Socket connected!");
+        });
+
+        function activateAmbulance() {
+            instrDisplay.innerText = "LOCATING GPS...";
+            
+            navigator.geolocation.watchPosition(p => {
+                // Update text so you know it's not frozen
+                instrDisplay.innerText = "SENDING LIVE COORDS...";
+                
+                socket.emit('start_journey', {
+                    lat: p.coords.latitude,
+                    lng: p.coords.longitude
+                });
+            }, err => {
+                // This will tell you EXACTLY why it fails
+                const errors = {
+                    1: "PERMISSION_DENIED: Please allow location access.",
+                    2: "POSITION_UNAVAILABLE: No GPS signal.",
+                    3: "TIMEOUT: GPS took too long."
+                };
+                alert(errors[err.code] || "GPS Error occurred.");
+                instrDisplay.innerText = "GPS ERROR. REFRESH PAGE.";
+            }, { 
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 15000 
+            });
+        }
+
+        // 2. Listen for Server Updates
+        socket.on('proximity_update', (dist) => {
+            hudElement.style.display = 'block';
+            distDisplay.innerText = dist + "m";
+            
+            if(dist < 150) { 
+                instrDisplay.innerText = "MOVE LEFT NOW!";
+                hudElement.classList.add('blink');
+                if (navigator.vibrate) navigator.vibrate(500);
+            } else {
+                instrDisplay.innerText = "PATH CLEAR - APPROACHING...";
+                hudElement.classList.remove('blink');
+            }
+        });
+
+        // Error handling if server goes down
+        socket.on("connect_error", () => {
+            instrDisplay.innerText = "SERVER ASLEEP... WAKING IT UP...";
+        });
+    </script>
+        });
+    </script>
+</body>
+</html>
