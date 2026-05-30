@@ -1,17 +1,27 @@
 {
-  "name": "rescue-path-backend",
+  "name": "rescue-path-system",
   "version": "1.0.0",
-  "description": "Ambulance tracking backend for Luxettipet coordinates",
+  "description": "Integrated Emergency Dispatch, Smart Choice Logic, and Virtual Green Corridor System",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "echo \"Error: no test info specified\" && exit 1"
   },
+  "keywords": [
+    "emergency",
+    "v2x",
+    "ambulance",
+    "dispatch",
+    "socket.io"
+  ],
+  "author": "Mohammad Abdul Nayeem",
+  "license": "ISC",
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.18.2",
+    "express": "^4.19.2",
     "socket.io": "^4.7.5"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   }
 }
