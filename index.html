@@ -1,82 +1,236 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RescuePath | Emergency Network</title>
     <style>
-        body { background: #000; color: #fff; text-align: center; font-family: sans-serif; }
-        #hud { border: 5px solid red; padding: 50px; margin: 20px; display: block; }
-        .blink { animation: blinker 0.6s linear infinite; }
-        @keyframes blinker { 50% { opacity: 0; } }
+        :root { --emergency-red: #ff3b30; --system-blue: #007aff; --warning-yellow: #ffcc00; }
+        body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; overflow-x: hidden; text-align: center; }
+        .hidden { display: none !important; }
+        .card { background: #1c1c1e; padding: 25px; border-radius: 20px; margin: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        
+        /* Buttons */
+        .btn { width: 100%; padding: 18px; border-radius: 12px; border: none; font-size: 18px; font-weight: bold; cursor: pointer; margin: 10px 0; transition: transform 0.1s; }
+        .btn:active { transform: scale(0.98); }
+        .btn-red { background: var(--emergency-red); color: white; }
+        .btn-blue { background: var(--system-blue); color: white; }
+        .btn-outline { background: transparent; border: 2px solid #3a3a3c; color: #fff; }
+
+        /* Patient: Panic Button */
+        #panicSurface { width: 220px; height: 220px; background: #300; border: 8px solid var(--emergency-red); border-radius: 50%; margin: 40px auto; display: flex; flex-direction: column; justify-content: center; align-items: center; user-select: none; }
+        #panicSurface.holding { background: #600; transform: scale(0.95); }
+        .countdown { font-size: 80px; font-weight: 900; color: var(--emergency-red); margin: 20px 0; }
+
+        /* Smart Choice UI */
+        .choice-container { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; }
+        .choice-box { background: #2c2c2e; padding: 15px; border-radius: 12px; border: 2px solid #3a3a3c; }
+        .choice-box.highlight { border-color: var(--warning-yellow); }
+
+        /* Commuter: Virtual Signal Overrides */
+        #virtualHUD { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .v-red { background: var(--emergency-red); animation: blink 0.6s infinite; }
+        .v-yellow { background: var(--warning-yellow); color: #000; }
+        @keyframes blink { 50% { opacity: 0.7; } }
+        
+        /* Driver: Dispatch Alert */
+        .alert-banner { background: #ff9500; padding: 20px; border-radius: 15px; animation: blink 1s infinite; }
     </style>
 </head>
 <body>
-    <button onclick="activateAmbulance()">AMBULANCE MODE</button>
-    <div id="hud">
-        <h1 id="dist">--</h1>
-        <p id="instr">SCANNING...</p>
+
+    <div id="setupPortal" class="card">
+        <h2>RESCUE PATH</h2>
+        <p style="color: #8e8e93;">Select your current status</p>
+        <button class="btn btn-red" onclick="initRole('patient')">Emergency Patient</button>
+        <button class="btn btn-blue" onclick="initRole('driver')">Ambulance Driver</button>
+        <button class="btn btn-outline" onclick="initRole('commuter')">Regular Commuter</button>
     </div>
 
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <div id="patientUI" class="hidden">
+        <div id="panicSurface" onmousedown="startPanicHold()" onmouseup="stopPanicHold()" ontouchstart="startPanicHold()" ontouchend="stopPanicHold()">
+            <span style="font-size: 14px;">HOLD 2s</span>
+            <span style="font-size: 24px; font-weight: 900;">TRIGGER</span>
+        </div>
+
+        <div id="countdownUI" class="hidden">
+            <p>AUTO-DISPATCH IN PROGRESS</p>
+            <div id="timerDisplay" class="countdown">5</div>
+            <button class="btn btn-outline" onclick="cancelPanic()">CANCEL</button>
+        </div>
+
+        <div id="statusHUD" class="card hidden">
+            <h3 id="statusTitle">Searching...</h3>
+            <p id="statusDetail" style="color: #8e8e93;">Scanning for nearest units.</p>
+        </div>
+
+        <div id="choiceUI" class="card hidden">
+            <h3 style="color: var(--warning-yellow);">Time Sensitive Choice</h3>
+            <div class="choice-container">
+                <div class="choice-box" onclick="resolveChoice('government')">
+                    <strong>GOVT</strong>
+                    <div id="govTime" style="font-size: 22px; margin: 5px 0;">--</div>
+                    <small>FREE</small>
+                </div>
+                <div class="choice-box highlight" onclick="resolveChoice('private')">
+                    <strong>PRIVATE</strong>
+                    <div id="pvtTime" style="font-size: 22px; margin: 5px 0;">--</div>
+                    <small>CHARGEABLE</small>
+                </div>
+            </div>
+            <p style="font-size: 12px; color: #8e8e93;">Private unit is significantly closer.</p>
+        </div>
+    </div>
+
+    <div id="virtualHUD" class="hidden">
+        <h1 id="vMainText" style="font-size: 40px;">STOP</h1>
+        <p id="vSubText" style="font-size: 20px;">AMBULANCE APPROACHING</p>
+        <button class="btn btn-outline" style="width: 150px;" onclick="closeVirtualHUD()">DISMISS</button>
+    </div>
+
+    <div id="driverUI" class="hidden">
+        <div class="card">
+            <h2 id="driverMode">DRIVER: STANDBY</h2>
+            <div id="dispatchAlert" class="alert-banner hidden">
+                <h3>NEW EMERGENCY!</h3>
+                <p id="alertDist">--m away</p>
+                <div class="choice-container">
+                    <button class="btn" style="background: green; color: white;" onclick="respondDispatch(true)">ACCEPT</button>
+                    <button class="btn" style="background: grey; color: white;" onclick="respondDispatch(false)">DECLINE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
     <script>
-        // 1. Initialize Connection
-        const socket = io("https://rescue-path.onrender.com");
-        const instrDisplay = document.getElementById('instr');
-        const distDisplay = document.getElementById('dist');
-        const hudElement = document.getElementById('hud');
+        const socket = io(); // Connects to your Render Backend
+        let myRole = '';
+        let holdTimer, countdownInterval;
+        let dispatchCallback = null;
 
-        // Connection feedback
-        socket.on("connect", () => {
-            instrDisplay.innerText = "CONNECTED TO SERVER. READY.";
-            console.log("Socket connected!");
-        });
-
-        function activateAmbulance() {
-            instrDisplay.innerText = "LOCATING GPS...";
+        function initRole(role) {
+            myRole = role;
+            document.getElementById('setupPortal').classList.add('hidden');
+            document.getElementById(role + 'UI').classList.remove('hidden');
             
-            navigator.geolocation.watchPosition(p => {
-                // Update text so you know it's not frozen
-                instrDisplay.innerText = "SENDING LIVE COORDS...";
-                
-                socket.emit('start_journey', {
-                    lat: p.coords.latitude,
-                    lng: p.coords.longitude
-                });
-            }, err => {
-                // This will tell you EXACTLY why it fails
-                const errors = {
-                    1: "PERMISSION_DENIED: Please allow location access.",
-                    2: "POSITION_UNAVAILABLE: No GPS signal.",
-                    3: "TIMEOUT: GPS took too long."
-                };
-                alert(errors[err.code] || "GPS Error occurred.");
-                instrDisplay.innerText = "GPS ERROR. REFRESH PAGE.";
-            }, { 
-                enableHighAccuracy: true,
-                maximumAge: 0,
-                timeout: 15000 
+            // Start GPS Telemetry
+            navigator.geolocation.watchPosition(pos => {
+                const data = { role, lat: pos.coords.latitude, lng: pos.coords.longitude };
+                socket.emit('register', data);
+                socket.emit('telemetry', data);
+            }, null, { enableHighAccuracy: true });
+        }
+
+        // --- PATIENT: TWO-STEP PANIC ---
+        function startPanicHold() {
+            document.getElementById('panicSurface').classList.add('holding');
+            if(navigator.vibrate) navigator.vibrate(50);
+            holdTimer = setTimeout(() => {
+                triggerCountdown();
+            }, 2000);
+        }
+
+        function stopPanicHold() {
+            document.getElementById('panicSurface').classList.remove('holding');
+            clearTimeout(holdTimer);
+        }
+
+        function triggerCountdown() {
+            document.getElementById('panicSurface').classList.add('hidden');
+            document.getElementById('countdownUI').classList.remove('hidden');
+            let time = 5;
+            announce("Emergency trigger active. Auto dispatch in 5 seconds.");
+            
+            countdownInterval = setInterval(() => {
+                time--;
+                document.getElementById('timerDisplay').innerText = time;
+                if(navigator.vibrate) navigator.vibrate(100);
+                if(time <= 0) {
+                    clearInterval(countdownInterval);
+                    executePanicDispatch();
+                }
+            }, 1000);
+        }
+
+        function executePanicDispatch() {
+            document.getElementById('countdownUI').classList.add('hidden');
+            document.getElementById('statusHUD').classList.remove('hidden');
+            navigator.geolocation.getCurrentPosition(p => {
+                socket.emit('EMERGENCY_TRIGGER', { lat: p.coords.latitude, lng: p.coords.longitude });
             });
         }
 
-        // 2. Listen for Server Updates
-        socket.on('proximity_update', (dist) => {
-            hudElement.style.display = 'block';
-            distDisplay.innerText = dist + "m";
+        function cancelPanic() {
+            clearInterval(countdownInterval);
+            location.reload(); // Hard reset
+        }
+
+        // --- SMART CHOICE HANDLING ---
+        socket.on('SMART_CHOICE_PROMPT', data => {
+            document.getElementById('statusHUD').classList.add('hidden');
+            document.getElementById('choiceUI').classList.remove('hidden');
+            document.getElementById('govTime').innerText = data.govTime + "m";
+            document.getElementById('pvtTime').innerText = data.pvtTime + "m";
+            announce(`Attention. A private unit is ${data.govTime - data.pvtTime} minutes faster. Please choose.`);
+        });
+
+        function resolveChoice(choice) {
+            document.getElementById('choiceUI').classList.add('hidden');
+            document.getElementById('statusHUD').classList.remove('hidden');
+            socket.emit('RESOLVE_CHOICE', choice);
+        }
+
+        // --- COMMUTER: VIRTUAL GREEN CORRIDOR ---
+        socket.on('VIRTUAL_SIGNAL', data => {
+            const vHUD = document.getElementById('virtualHUD');
+            vHUD.classList.remove('hidden', 'v-red', 'v-yellow');
+            vHUD.classList.add(data.type === 'RED' ? 'v-red' : 'v-yellow');
+            document.getElementById('vMainText').innerText = data.type === 'RED' ? "MOVE LEFT" : "CAUTION";
+            document.getElementById('vSubText').innerText = data.msg;
             
-            if(dist < 150) { 
-                instrDisplay.innerText = "MOVE LEFT NOW!";
-                hudElement.classList.add('blink');
-                if (navigator.vibrate) navigator.vibrate(500);
-            } else {
-                instrDisplay.innerText = "PATH CLEAR - APPROACHING...";
-                hudElement.classList.remove('blink');
+            if(data.type === 'RED') {
+                if(navigator.vibrate) navigator.vibrate([500, 200, 500]);
+                // Auto-play audio warning
+                announce(data.msg);
             }
         });
 
-        // Error handling if server goes down
-        socket.on("connect_error", () => {
-            instrDisplay.innerText = "SERVER ASLEEP... WAKING IT UP...";
+        function closeVirtualHUD() {
+            document.getElementById('virtualHUD').classList.add('hidden');
+        }
+
+        // --- DRIVER: DISPATCH HANDLING ---
+        socket.on('DISPATCH_INVITE', (data, callback) => {
+            dispatchCallback = callback;
+            document.getElementById('dispatchAlert').classList.remove('hidden');
+            announce("New emergency request received. Please respond.");
+            if(navigator.vibrate) navigator.vibrate([300, 100, 300, 100]);
         });
-    </script>
+
+        function respondDispatch(accepted) {
+            if(dispatchCallback) {
+                dispatchCallback({ accepted });
+                document.getElementById('dispatchAlert').classList.add('hidden');
+                if(accepted) {
+                    document.getElementById('driverMode').innerText = "MISSION ACTIVE";
+                    document.getElementById('driverMode').style.color = "red";
+                }
+            }
+        }
+
+        // --- SHARED: COMFORT TTS ---
+        socket.on('COMFORT_MSG', msg => {
+            document.getElementById('statusTitle').innerText = "Update";
+            document.getElementById('statusDetail').innerText = msg;
+            announce(msg);
         });
+
+        function announce(text) {
+            const msg = new SpeechSynthesisUtterance(text);
+            msg.rate = 0.9;
+            window.speechSynthesis.speak(msg);
+        }
     </script>
 </body>
 </html>
