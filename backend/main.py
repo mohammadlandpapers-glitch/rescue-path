@@ -20,6 +20,28 @@ class Telemetry(BaseModel):
     destination: str
     code_status: str
 
+ # --- HOSPITAL DATABASES ---
+mancherial_hospitals = [
+    {"name": "Government General Hospital", "type": "Government", "location": "Mancherial", "priority": 1},
+    {"name": "Sri Venkateshwara Multi Speciality", "type": "Private", "location": "Mancherial", "priority": 2},
+    {"name": "RHS Maxcare Multi Speciality", "type": "Private", "location": "Mancherial", "priority": 3},
+    {"name": "Pulse Critical Care Hospital", "type": "Private", "location": "Mancherial", "priority": 4}
+]
+
+karimnagar_hospitals = [
+    {"name": "Government Civil Hospital", "type": "Government", "location": "Karimnagar", "priority": 1},
+    {"name": "Apollo Reach Hospital", "type": "Private", "location": "Karimnagar", "priority": 2},
+    {"name": "Medicover Hospitals", "type": "Private", "location": "Karimnagar", "priority": 3},
+    {"name": "Prathima Institute of Medical Sciences", "type": "Private", "location": "Karimnagar", "priority": 4}
+]
+
+hyderabad_hospitals = [
+    {"name": "Osmania General Hospital", "type": "Government", "location": "Hyderabad", "priority": 1},
+    {"name": "Gandhi Hospital", "type": "Government", "location": "Hyderabad", "priority": 1},
+    {"name": "NIMS (Nizam's Institute)", "type": "Government/Semi", "location": "Hyderabad", "priority": 1},
+    {"name": "Yashoda Hospitals", "type": "Private", "location": "Hyderabad", "priority": 2},
+    {"name": "Apollo Health City", "type": "Private", "location": "Hyderabad", "priority": 3}
+]
 # --- MOCK DATABASES (Replace with PostgreSQL in production) ---
 ambulances = [
     {"id": "AMB-108-GOV", "type": "Govt", "lat": 18.870, "lon": 79.210, "status": "Available"},
@@ -43,48 +65,43 @@ def get_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 # --- STEP 1: THE WATERFALL DISPATCH ---
+# --- STEP 1: THE WATERFALL DISPATCH ---
 @app.post("/sos")
 async def process_sos(request: SOSRequest):
-    # 1. Search Government Units First
-    govt_units = [a for a in ambulances if a['type'] == 'Govt' and a['status'] == 'Available']
-    govt_units.sort(key=lambda x: get_distance(request.lat, request.lon, x['lat'], x['lon']))
-
-    if govt_units:
-        target = govt_units[0]
-        # In real life, trigger a Push Notification to Driver App here
-        return {"status": "SUCCESS", "msg": f"Govt Ambulance {target['id']} dispatched.", "ambulance_id": target['id']}
-
-    # 2. Fallback to Private Units
-    private_units = [a for a in ambulances if a['type'] == 'Private' and a['status'] == 'Available']
-    if private_units:
-        target = private_units[0]
-        return {"status": "PRIVATE_OFFER", "rate": target['rate'], "ambulance_id": target['id']}
-
-    raise HTTPException(status_code=404, detail="No ambulances available in radius")
-
-# --- STEP 2 & 3: TELEMETRY & CELL TOWER CLEARANCE ---
-@app.post("/telemetry")
-async def receive_telemetry(data: Telemetry, background_tasks: BackgroundTasks):
     """
-    Receives live GPS from Driver App and determines which towers to trigger.
+    Handles incoming SOS, finds nearest tower, 
+    and prioritizes Government rescue units.
     """
-    # Find towers within 1km of the ambulance's current position
-    active_towers = []
-    for tower in cell_towers:
-        dist = get_distance(data.lat, data.lon, tower['lat'], tower['lon'])
-        if dist <= 1.0: # 1km clearance radius
-            active_towers.append(tower['tower_id'])
     
-    if active_towers:
-        # Step 3: Trigger the actual broadcast logic
-        background_tasks.add_task(trigger_cell_broadcast, active_towers, data.destination)
-        
-    return {"status": "BEACON_RECEIVED", "active_towers": active_towers}
+    # 1. FIND NEAREST CELL TOWER (For signal tracking)
+    closest_tower = None
+    min_tower_dist = float('inf')
+    for tower in cell_towers:
+        dist = get_distance(request.lat, request.lon, tower["lat"], tower["lon"])
+        if dist < min_tower_dist:
+            min_tower_dist = dist
+            closest_tower = tower
 
-def trigger_cell_broadcast(towers: List[str], destination: str):
-    """
-    This function would connect to a Telecom API (like Airtel/Jio CBC).
-    """
-    for tower in towers:
-        print(f"!!! BROADCAST SENT TO {tower}: Emergency Vehicle cleared for {destination} !!!")
-        # Actual API call would go here
+    # 2. DISPATCH LOGIC (Government First)
+    # Filter for available units
+    govt_units = [a for a in ambulances if a['type'] == 'Govt' and a['status'] == 'Available']
+    pvt_units = [a for a in ambulances if a['type'] == 'Private' and a['status'] == 'Available']
+    
+    selected_unit = None
+    if govt_units:
+        selected_unit = govt_units[0] # Priority 1: Govt
+    elif pvt_units:
+        selected_unit = pvt_units[0] # Priority 2: Private
+    
+    # 3. RESPONSE
+    return {
+        "status": "EMERGENCY_ACTIVE",
+        "nearest_tower": closest_tower["tower_id"] if closest_tower else "Searching...",
+        "dispatch_unit": selected_unit["id"] if selected_unit else "NO_UNITS_AVAILABLE",
+        "hospitals": {
+            "primary_mancherial": mancherial_hospitals,
+            "secondary_karimnagar": karimnagar_hospitals,
+            "tertiary_hyderabad": hyderabad_hospitals
+        },
+        "timestamp": time.time()
+    }
