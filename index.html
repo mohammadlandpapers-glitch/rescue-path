@@ -131,11 +131,21 @@
                 }
             }, 1000);
         }
-        function triggerPanic() {
-            navigator.geolocation.getCurrentPosition(p => {
-                socket.emit('EMERGENCY_TRIGGER', { lat: p.coords.latitude, lng: p.coords.longitude });
-            });
-        }
+      function triggerPanic() {
+    navigator.geolocation.getCurrentPosition(p => {
+        socket.emit('EMERGENCY_TRIGGER', { lat: p.coords.latitude, lng: p.coords.longitude });
+
+        fetch('https://rescue-path-python.onrender.com/sos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                patient_id: "Patient_" + Math.floor(Math.random() * 1000),
+                lat: p.coords.latitude,
+                lon: p.coords.longitude
+            })
+        });
+    });
+}
 
         // --- SMART CHOICE ---
         socket.on('SMART_CHOICE_PROMPT', data => {
