@@ -4,14 +4,17 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
 
-// Serve static files from the root directory so index.html is accessible
+// --- SECURITY & STATIC FILES ---
+app.use(cors());
 app.use(express.static(__dirname));
 
 const server = http.createServer(app);
 const io = new Server(server, { 
-    cors: { origin: "*" },
+    cors: { 
+        origin: "*",
+        methods: ["GET", "POST"]
+    },
     pingTimeout: 60000 
 });
 
@@ -20,9 +23,6 @@ let activeDrivers = {};
 let activePatients = {};
 let activeCommuters = {}; 
 
-// --- CONFIGURATION ---
-const METERS_PER_MINUTE = 600;  // Avg emergency speed
-
 // --- MATH: Haversine Formula ---
 function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371000; // Meters
@@ -30,7 +30,8 @@ function getDistance(lat1, lon1, lat2, lon2) {
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
               Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-    return Math.round(R * 2 * Math.atan2(math.sqrt(a), math.sqrt(1-a)));
+    // Fixed: Math.sqrt must be capitalized in JavaScript
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 }
 
 // --- LOGIC: VIRTUAL GREEN CORRIDOR ---
@@ -71,14 +72,13 @@ io.on('connection', (socket) => {
         } else if (data.role === 'patient') {
             activePatients[socket.id] = data;
         }
+        console.log(`${data.role} registered: ${socket.id}`);
     });
 
     socket.on('telemetry', (data) => {
         if (activeDrivers[socket.id]) {
             activeDrivers[socket.id].lat = data.lat;
             activeDrivers[socket.id].lng = data.lng;
-            
-            // Activate Corridor if mission is active
             if (activeDrivers[socket.id].status === 'busy') {
                 runVirtualCorridor(socket.id);
             }
@@ -89,16 +89,21 @@ io.on('connection', (socket) => {
     });
 
     socket.on('EMERGENCY_TRIGGER', (coords) => {
+        console.log('🚨 SOS Triggered via Socket:', socket.id);
         activePatients[socket.id] = { lat: coords.lat, lng: coords.lng };
-        // Trigger for all available drivers
+        
+        // Alert all available drivers
         io.emit('DISPATCH_INVITE', { pLat: coords.lat, pLng: coords.lng }, (response) => {
             if (response && response.accepted) {
-                activeDrivers[socket.id].status = 'busy';
+                if (activeDrivers[socket.id]) {
+                    activeDrivers[socket.id].status = 'busy';
+                }
             }
         });
     });
 
     socket.on('disconnect', () => {
+        console.log('Device Disconnected:', socket.id);
         delete activeDrivers[socket.id];
         delete activeCommuters[socket.id];
         delete activePatients[socket.id];
@@ -106,7 +111,6 @@ io.on('connection', (socket) => {
 });
 
 // --- RENDER PORT BINDING ---
-// This is the critical fix for "Exited with status 1"
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`RescuePath Node Server Live on Port ${PORT}`);
