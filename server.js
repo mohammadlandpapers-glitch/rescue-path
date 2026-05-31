@@ -1,183 +1,160 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
+from fastapi import FastAPI, BackgroundTasks, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List
+import math
+import time
 
-const app = express();
-app.use(cors());
-const server = http.createServer(app);
-const io = new Server(server, { 
-    cors: { origin: "*" },
-    pingTimeout: 60000 
-});
+app = FastAPI()
 
-// --- DATA STORES ---
-let activeDrivers = {}; 
-let activePatients = {};
-let activeCommuters = {}; 
+# --- DATA MODELS ---
+class SOSRequest(BaseModel):
+    patient_id: str
+    lat: float
+    lon: float
+    medical_id: Optional[dict] = None
 
-// --- CONFIGURATION ---
-const GOVT_TIME_THRESHOLD = 15; // Minutes: When to trigger 'Smart Choice'
-const METERS_PER_MINUTE = 600;  // Average emergency speed in urban areas
+class Telemetry(BaseModel):
+    ambulance_id: str
+    lat: float
+    lon: float
+    destination: str
+    code_status: str
 
-// --- MATH ENGINE: Haversine Formula ---
-function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371000; // Meters
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-}
+# --- HOSPITAL DATABASES ---
+mancherial_hospitals = [
+    {"name": "Government General Hospital", "type": "Government", "location": "Mancherial", "priority": 1, "lat": 18.872, "lon": 79.212},
+    {"name": "Sri Venkateshwara Multi Speciality", "type": "Private", "location": "Mancherial", "priority": 2, "lat": 18.876, "lon": 79.218},
+    {"name": "RHS Maxcare Multi Speciality", "type": "Private", "location": "Mancherial", "priority": 3, "lat": 18.879, "lon": 79.222},
+    {"name": "Pulse Critical Care Hospital", "type": "Private", "location": "Mancherial", "priority": 4, "lat": 18.882, "lon": 79.228}
+]
 
-// --- LOGIC: DUAL-LAYER VIRTUAL GREEN CORRIDOR ---
-// This runs the moment an ambulance is 'busy' on a mission
-function runVirtualCorridor(driverId) {
-    const driver = activeDrivers[driverId];
-    if (!driver || driver.status !== 'busy') return;
+karimnagar_hospitals = [
+    {"name": "Government Civil Hospital", "type": "Government", "location": "Karimnagar", "priority": 1, "lat": 18.438, "lon": 79.132},
+    {"name": "Apollo Reach Hospital", "type": "Private", "location": "Karimnagar", "priority": 2, "lat": 18.442, "lon": 79.136}
+]
 
-    Object.keys(activeCommuters).forEach(cid => {
-        const commuter = activeCommuters[cid];
-        const dist = getDistance(driver.lat, driver.lng, commuter.lat, commuter.lng);
+hyderabad_hospitals = [
+    {"name": "Osmania General Hospital", "type": "Government", "location": "Hyderabad", "priority": 1, "lat": 17.378, "lon": 78.481},
+    {"name": "Apollo Health City", "type": "Private", "location": "Hyderabad", "priority": 3, "lat": 17.415, "lon": 78.411}
+]
 
-        // Layer 1: Immediate Warning (Radius 300m)
-        if (dist < 300) {
-            io.to(cid).emit('VIRTUAL_SIGNAL', { 
-                type: 'RED', 
-                msg: 'AMBULANCE BEHIND YOU! MOVE LEFT & STOP NOW.' 
-            });
-        } 
-        // Layer 2: Long-Range Pre-Clearing (Radius 300m to 3km)
-        else if (dist < 3000) {
-            io.to(cid).emit('VIRTUAL_SIGNAL', { 
-                type: 'YELLOW', 
-                msg: 'EMERGENCY CORRIDOR ACTIVE AHEAD. VACATE CENTER LANE.' 
-            });
-        }
-    });
-}
+# --- MOCK DATABASES ---
+ambulances = [
+    {"id": "AMB-108-GOV", "type": "Govt", "lat": 18.870, "lon": 79.210, "status": "Available"},
+    {"id": "AMB-PVT-01", "type": "Private", "lat": 18.880, "lon": 79.220, "status": "Available", "rate": 1500}
+]
 
-// --- LOGIC: SMART CHOICE & WATERFALL DISPATCH ---
-async function processEmergencyRequest(pId, pLat, pLng) {
-    let drivers = Object.keys(activeDrivers).map(id => ({ id, ...activeDrivers[id] }))
-                  .filter(d => d.status === 'available');
+# Database of physical cell tower locations in the city
+cell_towers = [
+    {"tower_id": "TOWER_UTHKOOR_01", "lat": 18.875, "lon": 79.215},
+    {"tower_id": "TOWER_MAIN_RD_02", "lat": 18.885, "lon": 79.225},
+    {"tower_id": "TOWER_LUXETTIPET_01", "lat": 18.865, "lon": 79.205},
+    {"tower_id": "TOWER_HIGHWAY_03", "lat": 18.895, "lon": 79.235}
+]
 
-    // Sort by type and distance
-    let govUnits = drivers.filter(d => d.type === 'government').sort((a,b) => getDistance(pLat, pLng, a.lat, a.lng) - getDistance(pLat, pLng, b.lat, b.lng));
-    let pvtUnits = drivers.filter(d => d.type === 'private').sort((a,b) => getDistance(pLat, pLng, a.lat, a.lng) - getDistance(pLat, pLng, b.lat, b.lng));
+# --- CORE MATH: HAVERSINE FORMULA ---
+def get_distance(lat1, lon1, lat2, lon2):
+    R = 6371  # Earth radius in km
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * \
+        math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
-    const closestGov = govUnits[0];
-    const closestPvt = pvtUnits[0];
+# --- V2X LOGIC: CELL TOWER PATH CORRIDOR ---
+def trigger_cell_broadcast(tower_id: str, message: str):
+    """
+    Simulates sending an urgent Cell Broadcast (CB) instruction to a specific tower.
+    In production, this interfaces with the Telecom Service Provider (TSP) API via eNodeB/gNodeB protocols.
+    """
+    # This forces a top-priority native pop-up on all phones within that tower's cell radius
+    print(print(f"📡 [CELL BROADCAST SUCCESS] → Sent to {tower_id} | Msg: {message}"))
 
-    // Check for Smart Choice Phase
-    if (closestGov && closestPvt) {
-        let govDist = getDistance(pLat, pLng, closestGov.lat, closestGov.lng);
-        let pvtDist = getDistance(pLat, pLng, closestPvt.lat, closestPvt.lng);
-        let govETA = Math.round(govDist / METERS_PER_MINUTE);
-        let pvtETA = Math.round(pvtDist / METERS_PER_MINUTE);
+def process_tower_clearance(amb_lat: float, amb_lon: float, dest_name: str):
+    """
+    Analyzes towers within a 3km radius of the ambulance and triggers broadcasts
+    if the tower is positioned forward along the rescue route.
+    """
+    # 1. Resolve destination coordinates from databases
+    dest_lat, dest_lon = None, None
+    all_hospitals = mancherial_hospitals + karimnagar_hospitals + hyderabad_hospitals
+    for h in all_hospitals:
+        if h["name"].lower() == dest_name.lower():
+            dest_lat, dest_lon = h["lat"], h["lon"]
+            break
+            
+    if not dest_lat:
+        return  # Destination not found in regional DB, skip path parsing
+        
+    current_dist_to_dest = get_distance(amb_lat, amb_lon, dest_lat, dest_lon)
+    
+    # 2. Check which towers are nearby and in front of the ambulance vector
+    for tower in cell_towers:
+        dist_to_tower = get_distance(amb_lat, amb_lon, tower["lat"], tower["lon"])
+        
+        # Target towers within 3.0 km radius
+        if dist_to_tower <= 3.0:
+            tower_to_dest = get_distance(tower["lat"], tower["lon"], dest_lat, dest_lon)
+            
+            # The Critical Condition: The tower must be closer to the hospital than the ambulance currently is
+            if tower_to_dest < current_dist_to_dest:
+                alert_msg_en = f"EMERGENCY: Ambulance approaching on this route. Move your vehicle to the LEFT lane and clear the path immediately."
+                alert_msg_te = f"అత్యవసర పరిస్థితి: అంబులెన్స్ ఈ మార్గంలో వస్తోంది. దయచేసి మీ వాహనాన్ని ఎడమ వైపునకు జరిపి వెంటనే దారి ఇవ్వండి."
+                
+                # Fire the cell broadcast network signal
+                trigger_cell_broadcast(tower["tower_id"], f"{alert_msg_en} / {alert_msg_te}")
 
-        // Trigger Choice if Gov is > 15m away and Pvt is at least 2x closer
-        if (govETA > GOVT_TIME_THRESHOLD && pvtDist < (govDist / 2)) {
-            io.to(pId).emit('SMART_CHOICE_PROMPT', {
-                govTime: govETA,
-                govDist: (govDist/1000).toFixed(1),
-                pvtTime: pvtETA,
-                pvtDist: (pvtDist/1000).toFixed(1)
-            });
-            return; 
-        }
+# --- API ENDPOINTS ---
+@app.post("/sos")
+async def process_sos(request: SOSRequest):
+    """
+    Handles incoming SOS, finds nearest tower, and prioritizes Government rescue units.
+    """
+    closest_tower = None
+    min_tower_dist = float('inf')
+    for tower in cell_towers:
+        dist = get_distance(request.lat, request.lon, tower["lat"], tower["lon"])
+        if dist < min_tower_dist:
+            min_tower_dist = dist
+            closest_tower = tower
+
+    govt_units = [a for a in ambulances if a['type'] == 'Govt' and a['status'] == 'Available']
+    pvt_units = [a for a in ambulances if a['type'] == 'Private' and a['status'] == 'Available']
+    
+    selected_unit = None
+    if govt_units:
+        selected_unit = govt_units[0]
+    elif pvt_units:
+        selected_unit = pvt_units[0]
+    
+    return {
+        "status": "EMERGENCY_ACTIVE",
+        "nearest_tower": closest_tower["tower_id"] if closest_tower else "Searching...",
+        "dispatch_unit": selected_unit["id"] if selected_unit else "NO_UNITS_AVAILABLE",
+        "hospitals": {
+            "primary_mancherial": mancherial_hospitals,
+            "secondary_karimnagar": karimnagar_hospitals,
+            "tertiary_hyderabad": hyderabad_hospitals
+        },
+        "timestamp": time.time()
     }
 
-    // Default: Start Government-First Waterfall
-    executeWaterfall(pId, [...govUnits, ...pvtUnits], pLat, pLng);
-}
-
-async function executeWaterfall(pId, queue, pLat, pLng) {
-    for (let driver of queue) {
-        io.to(pId).emit('COMFORT_MSG', `Contacting nearest ${driver.type} ambulance...`);
+@app.post("/telemetry/update")
+async def receive_telemetry(data: Telemetry, background_tasks: BackgroundTasks):
+    """
+    Endpoint for high-frequency live location updates from the driver's phone.
+    Triggers targeted regional cell tower clear-out blocks dynamically.
+    """
+    if data.code_status == "AMBULANCE_CODE_1" and data.destination:
+        # Offload the geographical network scanning to a background task 
+        # to ensure the API response remains under 5 milliseconds.
+        background_tasks.add_task(
+            process_tower_clearance, 
+            data.lat, 
+            data.lon, 
+            data.destination
+        )
+        return {"status": "CLEARANCE_ACTIVE", "processed_at": time.time()}
         
-        const accepted = await new Promise(resolve => {
-            const timeout = setTimeout(() => resolve(false), 15000); // 15s to accept
-            io.to(driver.id).emit('DISPATCH_INVITE', { pLat, pLng }, (response) => {
-                clearTimeout(timeout);
-                if (response && response.accepted) resolve(true);
-                else resolve(false);
-            });
-        });
-
-        if (accepted) {
-            activeDrivers[driver.id].status = 'busy';
-            activeDrivers[driver.id].assignedPatient = pId;
-            io.to(pId).emit('MISSION_STARTED', { 
-                msg: `Help is on the way! ${driver.type.toUpperCase()} unit assigned.`,
-                driverName: driver.name 
-            });
-            return;
-        }
-    }
-    io.to(pId).emit('COMFORT_MSG', "All units busy. Retrying wider network scan...");
-}
-
-// --- SOCKET CONNECTION HUB ---
-io.on('connection', (socket) => {
-    console.log('Node Connected:', socket.id);
-
-    socket.on('register', (data) => {
-        if (data.role === 'driver') {
-            activeDrivers[socket.id] = { ...data, status: 'available' };
-        } else if (data.role === 'commuter') {
-            activeCommuters[socket.id] = data;
-        } else if (data.role === 'patient') {
-            activePatients[socket.id] = data;
-        }
-    });
-
-    socket.on('telemetry', (data) => {
-        // Update Driver Location
-        if (activeDrivers[socket.id]) {
-            activeDrivers[socket.id].lat = data.lat;
-            activeDrivers[socket.id].lng = data.lng;
-            // Immediate Corridor Activation if on mission
-            if (activeDrivers[socket.id].status === 'busy') {
-                runVirtualCorridor(socket.id);
-                // Also update the patient on live distance
-                const pId = activeDrivers[socket.id].assignedPatient;
-                if (pId && activePatients[pId]) {
-                    const d = getDistance(data.lat, data.lng, activePatients[pId].lat, activePatients[pId].lng);
-                    io.to(pId).emit('LIVE_DISTANCE', d);
-                }
-            }
-        } 
-        // Update Commuter/Patient Location
-        else if (activeCommuters[socket.id]) {
-            activeCommuters[socket.id].lat = data.lat;
-            activeCommuters[socket.id].lng = data.lng;
-        }
-    });
-
-    socket.on('EMERGENCY_TRIGGER', (coords) => {
-        activePatients[socket.id] = { lat: coords.lat, lng: coords.lng };
-        processEmergencyRequest(socket.id, coords.lat, coords.lng);
-    });
-
-    socket.on('RESOLVE_CHOICE', (choice) => {
-        const p = activePatients[socket.id];
-        if (!p) return;
-        // Re-calculate list based on choice
-        let drivers = Object.keys(activeDrivers).map(id => ({ id, ...activeDrivers[id] })).filter(d => d.status === 'available');
-        let queue = (choice === 'private') 
-            ? drivers.filter(d => d.type === 'private').sort((a,b) => getDistance(p.lat, p.lng, a.lat, a.lng) - getDistance(p.lat, p.lng, b.lat, b.lng))
-            : drivers.sort((a,b) => (a.type === 'government' ? -1 : 1));
-        
-        executeWaterfall(socket.id, queue, p.lat, p.lng);
-    });
-
-    socket.on('disconnect', () => {
-        delete activeDrivers[socket.id];
-        delete activeCommuters[socket.id];
-        delete activePatients[socket.id];
-    });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`RescuePath Backend Live on Port ${PORT}`));
+    return {"status": "LOGGED", "processed_at": time.time()}
