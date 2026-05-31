@@ -131,7 +131,7 @@
                 }
             }, 1000);
         }
-      function triggerPanic() {
+     function triggerPanic() {
     navigator.geolocation.getCurrentPosition(p => {
         socket.emit('EMERGENCY_TRIGGER', { lat: p.coords.latitude, lng: p.coords.longitude });
 
@@ -143,9 +143,10 @@
                 lat: p.coords.latitude,
                 lon: p.coords.longitude
             })
-        });
+        }).then(res => console.log("Status:", res.status));
     });
-}
+
+
 
         // --- SMART CHOICE ---
         socket.on('SMART_CHOICE_PROMPT', data => {
