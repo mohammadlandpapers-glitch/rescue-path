@@ -5,7 +5,15 @@ import math
 import time
 
 app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # --- DATA MODELS ---
 class SOSRequest(BaseModel):
     patient_id: str
@@ -20,6 +28,20 @@ class Telemetry(BaseModel):
     destination: str
     code_status: str
 
+@app.get("/")
+async def root():
+    return {"status": "online", "message": "Rescue Path Backend is active"}
+
+@app.post("/sos")
+async def trigger_sos(request: SOSRequest):
+    # This captures the data sent from your phone
+    print(f"🚨 SOS Received! Patient: {request.patient_id}")
+    print(f"📍 Location: {request.lat}, {request.lon}")
+    
+    return {
+        "status": "success", 
+        "message": "Emergency received. Searching for nearest hospital..."
+    }
 # --- HOSPITAL DATABASES ---
 mancherial_hospitals = [
     {"name": "Government General Hospital", "type": "Government", "location": "Mancherial", "priority": 1, "lat": 18.872, "lon": 79.212},
