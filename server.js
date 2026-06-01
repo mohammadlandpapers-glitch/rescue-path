@@ -4,114 +4,43 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 
 const app = express();
-
-// --- SECURITY & STATIC FILES ---
 app.use(cors());
-app.use(express.static(__dirname));
-
 const server = http.createServer(app);
 const io = new Server(server, { 
-    cors: { 
-        origin: "*",
-        methods: ["GET", "POST"]
-    },
-    pingTimeout: 60000 
+    cors: { origin: "*" } 
 });
 
-// --- DATA STORES ---
-let activeDrivers = {}; 
-let activePatients = {};
-let activeCommuters = {}; 
+let activeDrivers = {};
 
-// --- MATH: Haversine Formula ---
-function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371000; // Meters
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-    // Fixed: Math.sqrt must be capitalized in JavaScript
-    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-}
-
-// --- LOGIC: VIRTUAL GREEN CORRIDOR ---
-function runVirtualCorridor(driverId) {
-    const driver = activeDrivers[driverId];
-    if (!driver || driver.status !== 'busy') return;
-
-    Object.keys(activeCommuters).forEach(cid => {
-        const commuter = activeCommuters[cid];
-        const dist = getDistance(driver.lat, driver.lng, commuter.lat, commuter.lng);
-
-        // Layer 1: Immediate Warning (Radius 300m)
-        if (dist < 300) {
-            io.to(cid).emit('VIRTUAL_SIGNAL', { 
-                type: 'RED', 
-                msg: 'AMBULANCE BEHIND YOU! MOVE LEFT & STOP NOW.' 
-            });
-        } 
-        // Layer 2: Long-Range Pre-Clearing (300m to 3km)
-        else if (dist < 3000) {
-            io.to(cid).emit('VIRTUAL_SIGNAL', { 
-                type: 'YELLOW', 
-                msg: 'EMERGENCY CORRIDOR ACTIVE AHEAD. VACATE CENTER LANE.' 
-            });
-        }
-    });
-}
-
-// --- SOCKET CONNECTION HUB ---
 io.on('connection', (socket) => {
     console.log('Device Connected:', socket.id);
 
     socket.on('register', (data) => {
         if (data.role === 'driver') {
             activeDrivers[socket.id] = { ...data, status: 'available' };
-        } else if (data.role === 'commuter') {
-            activeCommuters[socket.id] = data;
-        } else if (data.role === 'patient') {
-            activePatients[socket.id] = data;
-        }
-        console.log(`${data.role} registered: ${socket.id}`);
-    });
-
-    socket.on('telemetry', (data) => {
-        if (activeDrivers[socket.id]) {
-            activeDrivers[socket.id].lat = data.lat;
-            activeDrivers[socket.id].lng = data.lng;
-            if (activeDrivers[socket.id].status === 'busy') {
-                runVirtualCorridor(socket.id);
-            }
-        } else if (activeCommuters[socket.id]) {
-            activeCommuters[socket.id].lat = data.lat;
-            activeCommuters[socket.id].lng = data.lng;
+            console.log(`Driver Registered: ${socket.id}`);
         }
     });
 
     socket.on('EMERGENCY_TRIGGER', (coords) => {
-        console.log('🚨 SOS Triggered via Socket:', socket.id);
-        activePatients[socket.id] = { lat: coords.lat, lng: coords.lng };
-        
-        // Alert all available drivers
-        io.emit('DISPATCH_INVITE', { pLat: coords.lat, pLng: coords.lng }, (response) => {
-            if (response && response.accepted) {
-                if (activeDrivers[socket.id]) {
-                    activeDrivers[socket.id].status = 'busy';
-                }
-            }
-        });
+        console.log('🚨 SOS via Socket:', coords);
+        io.emit('DISPATCH_INVITE', coords);
+    });
+
+    socket.on('accept_mission', (data) => {
+        if (activeDrivers[socket.id]) {
+            activeDrivers[socket.id].status = 'busy';
+            console.log(`Driver ${socket.id} (AMB-TELE-108) is now BUSY.`);
+        }
     });
 
     socket.on('disconnect', () => {
         console.log('Device Disconnected:', socket.id);
         delete activeDrivers[socket.id];
-        delete activeCommuters[socket.id];
-        delete activePatients[socket.id];
     });
 });
 
-// --- RENDER PORT BINDING ---
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`RescuePath Node Server Live on Port ${PORT}`);
 });
