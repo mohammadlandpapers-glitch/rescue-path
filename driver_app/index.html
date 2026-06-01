@@ -51,14 +51,13 @@
             animation: pulse 1.5s infinite;
         }
 
-        /* Dispatch Alert Overlay Card */
         .alert-card {
             background-color: #2c0e0e;
             border: 2px solid #ff3b30;
             border-radius: 16px;
             padding: 20px;
             margin-bottom: 15px;
-            display: none; /* Hidden until server pushes alert */
+            display: none;
             animation: shake 0.5s ease-in-out;
         }
 
@@ -70,7 +69,6 @@
             letter-spacing: 1px;
         }
 
-        /* Hospital Selector UI (Ambulance Code 1 Activation) */
         .navigation-panel {
             background-color: var(--card-bg);
             border-radius: 16px;
@@ -106,6 +104,12 @@
             transition: background 0.2s;
         }
 
+        .action-btn:disabled {
+            background-color: #3a3a3c;
+            color: #777;
+            cursor: not-allowed;
+        }
+
         .action-btn.active-transit {
             background-color: var(--emergency-green);
         }
@@ -116,10 +120,11 @@
             font-family: monospace;
             padding: 10px;
             border-radius: 8px;
-            height: 100px;
+            height: 120px;
             overflow-y: auto;
-            font-size: 12px;
+            font-size: 11px;
             color: #34c759;
+            margin-top: 5px;
         }
 
         @keyframes pulse {
@@ -137,10 +142,9 @@
 </head>
 <body>
 
-    <!-- Top Status Ribbon -->
     <div class="status-header">
         <div>
-            <div style="font-size: 12px; color: var(--text-muted)">VEHICLE ID</div>
+            <div style="font-size: 10px; color: var(--text-muted)">VEHICLE ID</div>
             <div style="font-weight: bold;">AMB-TELE-108</div>
         </div>
         <div class="status-indicator" id="dutyStatus">
@@ -149,119 +153,136 @@
         </div>
     </div>
 
-    <!-- Incoming Emergency SOS Alert Module -->
     <div class="alert-card" id="incomingAlertCard">
-        <div class="alert-title">🚨 CRITICAL INCIDENT ASSIGNED</div>
-        <div style="margin-bottom: 15px; font-size: 15px;">
-            <p><strong>Patient Contact:</strong> <span id="alertPatientId">--</span></p>
-            <p><strong>Location coordinates:</strong> <span id="alertGps">--</span></p>
-            <p id="alertMedicalData" style="color: #ffcc00; font-style: italic;"></p>
+        <div class="alert-title">🚨 EMERGENCY ASSIGNED</div>
+        <div style="margin-bottom: 15px; font-size: 14px;">
+            <p><strong>Patient ID:</strong> <span id="alertPatientId">--</span></p>
+            <p><strong>GPS:</strong> <span id="alertGps">--</span></p>
         </div>
         <button class="action-btn" style="background-color: #ff3b30;" onclick="acceptWaterfallMission()">
             ACCEPT DISPATCH
         </button>
     </div>
 
-    <!-- Main Navigation Control Hub -->
     <div class="navigation-panel">
-        <h3 style="margin: 0 0 5px 0;">Destination Management</h3>
-        <p style="color: var(--text-muted); font-size: 13px; margin: 0 0 10px 0;">
-            Once patient is secured, select hospital destination to activate traffic pre-emption.
-        </p>
-
-        <!-- Ambulance Code 1 Trigger Selection -->
+        <h3 style="margin: 0;">Destination Management</h3>
         <select class="hospital-select" id="hospitalSelector">
-            <option value="">-- Choose Hospital (Ambulance Code 1) --</option>
-            <option value="govt_general">Government General Hospital</option>
-            <option value="apollo_hyd">Apollo Hospital</option>
-            <option value="nims_hyd">NIMS Trauma Center</option>
-            <option value="local_clinic">Local Area Trauma Care</option>
+            <option value="">-- Choose Hospital --</option>
+            <option value="Government General Hospital">Government General Hospital</option>
+            <option value="Sri Venkateshwara Multi Speciality">Sri Venkateshwara Multi Speciality</option>
+            <option value="Apollo Health City">Apollo Health City</option>
         </select>
 
         <button class="action-btn" id="transitControlBtn" onclick="toggleHospitalTransit()" disabled>
             START TRANSIT CLEARANCE
         </button>
 
-        <div style="font-size: 12px; font-weight: bold; margin-top: 10px;">Telemetry System Activity Log</div>
-        <div class="log-box" id="telemetryLog">System listening for server handshake initialization...</div>
+        <div style="font-size: 11px; font-weight: bold; margin-top: 10px; color: var(--text-muted);">SYSTEM LOGS</div>
+        <div class="log-box" id="telemetryLog">Initializing system handshake...</div>
     </div>
 
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
     <script>
+        // Server Configurations
+        const socket = io('http://localhost:3000'); // Node Server
+        const PYTHON_BACKEND = 'http://localhost:8000'; // Python Server
+        
         let currentMission = null;
         let beaconInterval = null;
 
-        // Simulated Incoming Socket Push message from backend engine (for development testing execution)
-        setTimeout(() => {
-            simulateIncomingSOS({
-                patient_id: "9281410800",
-                lat: 18.8745,
-                lon: 79.2145,
-                medical_id: { blood_group: "O+", allergies: "None Disclosed" }
-            });
-        }, 4000);
-
+        // Log Functionality
         function logTelemetry(msg) {
             const logBox = document.getElementById('telemetryLog');
             logBox.innerHTML += `<br>[${new Date().toLocaleTimeString()}] ${msg}`;
             logBox.scrollTop = logBox.scrollHeight;
         }
 
-        function simulateIncomingSOS(packet) {
+        // 1. Initial Connection & Registration
+        socket.on('connect', () => {
+            logTelemetry("Connected to Node Coordination Server.");
+            socket.emit('register', { role: 'driver', id: 'AMB-TELE-108' });
+        });
+
+        // 2. Listen for Dispatch alerts from Node Server
+        socket.on('DISPATCH_INVITE', (packet) => {
             currentMission = packet;
-            document.getElementById('alertPatientId').innerText = packet.patient_id;
+            document.getElementById('alertPatientId').innerText = packet.patient_id || "9281410800";
             document.getElementById('alertGps').innerText = `${packet.lat.toFixed(4)}, ${packet.lon.toFixed(4)}`;
-            
-            if(packet.medical_id) {
-                document.getElementById('alertMedicalData').innerText = `⚠️ Optional Medical ID Attached: Blood Group ${packet.medical_id.blood_group}`;
-            }
-
             document.getElementById('incomingAlertCard').style.display = 'block';
-            logTelemetry("ALERT: Incoming SOS packet pushed from main server waterfall queue.");
-        }
+            logTelemetry("🚨 ALERT: Emergency SOS received via Socket.");
+        });
 
-        function acceptWaterfallMission() {
+        // 3. Fallback: Manual simulation for testing (triggers after 4 seconds)
+        setTimeout(() => {
+            if (!currentMission) {
+                logTelemetry("Self-testing: Simulating incoming packet...");
+                socket.emit('EMERGENCY_TRIGGER', { 
+                    patient_id: "9281410800", 
+                    lat: 18.8745, 
+                    lon: 79.2145 
+                });
+            }
+        }, 4000);
+
+        // 4. Accept Mission Logic
+        async function acceptWaterfallMission() {
+            // UI Transition
             document.getElementById('incomingAlertCard').style.display = 'none';
             document.getElementById('dutyStatus').style.color = '#ffcc00';
             document.getElementById('dutyStatus').querySelector('.pulse-dot').style.backgroundColor = '#ffcc00';
-            document.getElementById('dutyStatus').querySelector('span').innerText = "EN-ROUTE TO VICTIM";
-            
+            document.getElementById('dutyStatus').querySelector('span').innerText = "EN-ROUTE";
             document.getElementById('transitControlBtn').disabled = false;
-            logTelemetry(`Mission Accepted. Navigating to victim coordinates using high-fidelity telemetry.`);
+
+            // Notify Node Server
+            socket.emit('accept_mission', { driver_id: 'AMB-TELE-108' });
+
+            // Notify Python Backend
+            try {
+                const response = await fetch(`${PYTHON_BACKEND}/sos`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        patient_id: currentMission.patient_id || "9281410800",
+                        lat: currentMission.lat,
+                        lon: currentMission.lon
+                    })
+                });
+                const data = await response.json();
+                logTelemetry(`Python Response: ${data.status}`);
+            } catch (err) {
+                logTelemetry("❌ Python Backend Offline");
+            }
         }
 
-        // Handle Phase C: The Ambulance Code 1 Trigger
+        // 5. Transit Control & Telemetry Loop
         function toggleHospitalTransit() {
             const selectedHospital = document.getElementById('hospitalSelector').value;
             const btn = document.getElementById('transitControlBtn');
 
             if (!selectedHospital) {
-                alert("Please select a target hospital destination to initialize clearance path routing configuration.");
+                alert("Please select a hospital.");
                 return;
             }
 
             if (!beaconInterval) {
-                // Initialize high-speed loop updates (Step 3: Pulse every 2 seconds)
                 btn.innerText = "HALT CORRIDOR CLEARANCE";
                 btn.classList.add('active-transit');
-                document.getElementById('dutyStatus').style.color = var(--emergency-green);
-                
-                logTelemetry(`AMBULANCE CODE 1 CRITICAL TRANSIT TO: [${selectedHospital.toUpperCase()}]`);
-                
+                logTelemetry(`CODE 1 ACTIVE: Transit to ${selectedHospital}`);
                 beaconInterval = setInterval(sendLiveLocationBeacon, 2000);
             } else {
-                // Clear state engine loop
                 clearInterval(beaconInterval);
                 beaconInterval = null;
                 btn.innerText = "START TRANSIT CLEARANCE";
                 btn.classList.remove('active-transit');
-                logTelemetry("Clearance transmission halted. Re-entering server standby posture.");
+                logTelemetry("Clearance transmission halted.");
             }
         }
 
-        // High frequency background position extraction
+        // 6. Live Location Beacon to Python
         function sendLiveLocationBeacon() {
             if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition((position) => {
+                navigator.geolocation.getCurrentPosition(async (position) => {
                     const payload = {
                         ambulance_id: "AMB-TELE-108",
                         lat: position.coords.latitude,
@@ -270,8 +291,16 @@
                         destination: document.getElementById('hospitalSelector').value
                     };
                     
-                    // Outward telemetry loop simulation hitting python backend endpoint module
-                    logTelemetry(`Beacon Sent → Lat: ${payload.lat.toFixed(5)}, Lon: ${payload.lon.toFixed(5)} | Clearing Cell Path Ahead.`);
+                    try {
+                        await fetch(`${PYTHON_BACKEND}/telemetry/update`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        logTelemetry(`Beacon Sent: [${payload.lat.toFixed(4)}, ${payload.lon.toFixed(4)}]`);
+                    } catch (err) {
+                        console.error("Telemetry link lost.");
+                    }
                 }, null, { enableHighAccuracy: true });
             }
         }
